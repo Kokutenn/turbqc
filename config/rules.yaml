@@ -1,0 +1,439 @@
+# TurbQC rule catalogue.
+#
+# Each rule is plain SQL run by DuckDB against the view v_reports (one row per report)
+# or v_track (AIREPs ordered per callsign, with previous positions attached).
+#   fail_when:  a predicate; rows where it is TRUE fail the rule
+#   fail_query: a full query returning the report_id of failing rows
+# ${name} placeholders are filled from config/settings.yaml (thresholds, spatial).
+#
+# severity: error   -> record is rejected from the output product
+#           warning -> record is kept but flagged to consumers
+#           info    -> counted for monitoring only
+# dimension drives which KPI a failure counts against.
+
+rules:
+  # ---------------------------------------------------------------- completeness
+  - id: R001
+    name: Receipt time present
+    dimension: completeness
+    severity: error
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: The time the report reached the provider must be present; latency cannot be measured without it.
+    fail_when: receipt_time IS NULL
+
+  - id: R002
+    name: Observation time present
+    dimension: completeness
+    severity: error
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: The time the observation was made must be present.
+    fail_when: obs_time IS NULL
+
+  - id: R003
+    name: Aircraft identifier present
+    dimension: completeness
+    severity: error
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: AIREPs carry a callsign, PIREPs an aircraft type. Without it duplicates and tracks cannot be resolved.
+    fail_when: aircraft_ref IS NULL OR trim(aircraft_ref) = ''
+
+  - id: R004
+    name: Position present
+    dimension: completeness
+    severity: error
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: Latitude and longitude must both be present.
+    fail_when: lat IS NULL OR lon IS NULL
+
+  - id: R005
+    name: Altitude present
+    dimension: completeness
+    severity: error
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: Turbulence is altitude-specific; a report without altitude cannot be placed in a flight-level band.
+    fail_when: alt_ft IS NULL
+
+  - id: R006
+    name: Report type in code list
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-03
+    applies_to: [acars_airep, pirep, unknown]
+    description: Report type must be AIREP, PIREP or Urgent PIREP.
+    fail_when: report_type IS NULL OR report_type NOT IN ('AIREP', 'PIREP', 'Urgent PIREP')
+
+  - id: R007
+    name: Original message text present
+    dimension: completeness
+    severity: warning
+    requirement: DQ-REQ-01
+    applies_to: [acars_airep, pirep]
+    description: The raw message is needed for audit and for the cross-checks R053, R054 and R057.
+    fail_when: raw_text IS NULL OR trim(raw_text) = ''
+
+  # ---------------------------------------------------------------- validity
+  - id: R010
+    name: Latitude in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Latitude must lie in [-90, 90].
+    fail_when: lat < -90 OR lat > 90
+
+  - id: R011
+    name: Longitude in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Longitude must lie in [-180, 180].
+    fail_when: lon < -180 OR lon > 180
+
+  - id: R012
+    name: Altitude in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Altitude must lie between -1,500 ft (below-sea-level airfields) and 60,000 ft.
+    fail_when: alt_ft < -1500 OR alt_ft > 60000
+
+  - id: R013
+    name: Not at null island
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: A position of exactly 0,0 is almost always a default value, not a real fix.
+    fail_when: lat = 0 AND lon = 0
+
+  - id: R014
+    name: AIREP at en-route altitude
+    dimension: validity
+    severity: warning
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep]
+    description: Automated position reports come from aircraft en route; one below 10,000 ft is unusual and worth a look.
+    fail_when: alt_ft < 10000
+
+  - id: R015
+    name: Turbulence intensity in code list
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-03
+    applies_to: [acars_airep, pirep]
+    description: A reported intensity that has no EDR mapping cannot be used in the product.
+    fail_when: tb_intensity IS NOT NULL AND edr_band IS NULL
+
+  - id: R016
+    name: Turbulence layer base below top
+    dimension: validity
+    severity: warning
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: When a turbulence layer is given, its base must not be above its top.
+    fail_when: tb_base_ft IS NOT NULL AND tb_top_ft IS NOT NULL AND tb_base_ft > tb_top_ft
+
+  - id: R017
+    name: EDR estimate in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: EDR is reported on a 0 to 1 scale.
+    fail_when: edr_est < 0 OR edr_est > 1
+
+  - id: R018
+    name: Temperature in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Air temperature must lie in [-90, +50] C.
+    fail_when: temp_c < -90 OR temp_c > 50
+
+  - id: R019
+    name: Wind speed in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Wind speed must lie in [0, 300] kt.
+    fail_when: wind_speed_kt < 0 OR wind_speed_kt > 300
+
+  - id: R020
+    name: Wind direction in range
+    dimension: validity
+    severity: error
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Wind direction must lie in [0, 360] degrees.
+    fail_when: wind_dir_deg < 0 OR wind_dir_deg > 360
+
+  - id: R021
+    name: Vertical gust in range
+    dimension: validity
+    severity: warning
+    requirement: DQ-REQ-02
+    applies_to: [acars_airep, pirep]
+    description: Derived vertical gust above 100 kt is implausible.
+    fail_when: abs(vert_gust_kt) > 100
+
+  - id: R022
+    name: Provider flagged bad location
+    dimension: validity
+    severity: warning
+    requirement: DQ-REQ-10
+    applies_to: [acars_airep, pirep]
+    description: The provider could not locate the report reliably. Surfaced rather than dropped.
+    fail_when: coalesce(flag_bad_location, false)
+
+  - id: R023
+    name: Provider flagged missing flight level
+    dimension: validity
+    severity: warning
+    requirement: DQ-REQ-10
+    applies_to: [acars_airep, pirep]
+    description: The provider could not decode a flight level from the message.
+    fail_when: coalesce(flag_no_flt_lvl, false)
+
+  # ---------------------------------------------------------------- timeliness
+  - id: R030
+    name: Observation not after receipt
+    dimension: timeliness
+    severity: error
+    requirement: DQ-REQ-04
+    applies_to: [acars_airep, pirep]
+    description: An observation stamped later than its own receipt time (beyond clock tolerance) points to a clock or decoding fault.
+    fail_when: date_diff('second', receipt_time, obs_time) > ${future_tolerance_min} * 60
+
+  - id: R031
+    name: Observation not after ingestion
+    dimension: timeliness
+    severity: error
+    requirement: DQ-REQ-04
+    applies_to: [acars_airep, pirep]
+    description: An observation stamped later than the moment TurbQC ingested it is in the future.
+    fail_when: date_diff('second', ingested_at, obs_time) > ${future_tolerance_min} * 60
+
+  - id: R032
+    name: Not stale on arrival
+    dimension: timeliness
+    severity: warning
+    requirement: DQ-REQ-05
+    applies_to: [acars_airep, pirep]
+    description: A report older than the stale threshold when received is of little nowcasting value.
+    fail_when: latency_min > ${stale_min}
+
+  - id: R033
+    name: Within latency SLA
+    dimension: timeliness
+    severity: info
+    requirement: DQ-REQ-05
+    applies_to: [acars_airep, pirep]
+    description: Counted for the timeliness KPI; not a record defect on its own.
+    fail_when: latency_min > ${latency_sla_min}
+
+  - id: R034
+    name: Provider assumed the time stamp
+    dimension: timeliness
+    severity: info
+    requirement: DQ-REQ-10
+    applies_to: [acars_airep, pirep]
+    description: The provider inferred the observation time (no time in the message or mid-point assumed).
+    fail_when: coalesce(flag_no_time_stamp, false) OR coalesce(flag_mid_point_assumed, false)
+
+  # ---------------------------------------------------------------- uniqueness
+  - id: R040
+    name: Duplicate delivery
+    dimension: uniqueness
+    severity: warning
+    requirement: DQ-REQ-06
+    applies_to: [acars_airep, pirep]
+    description: The same observation (aircraft, time, position, altitude, intensity) delivered more than once. The first receipt is kept; later copies fail.
+    fail_query: |
+      SELECT report_id FROM (
+        SELECT report_id,
+               row_number() OVER (
+                 PARTITION BY aircraft_ref, obs_time, round(lat, 2), round(lon, 2), alt_ft,
+                              coalesce(tb_intensity, '')
+                 ORDER BY receipt_time, report_id) AS rn
+        FROM v_reports
+        WHERE obs_time IS NOT NULL AND aircraft_ref IS NOT NULL
+      ) WHERE rn > 1
+
+  - id: R041
+    name: Conflicting duplicate
+    dimension: uniqueness
+    severity: warning
+    requirement: DQ-REQ-06
+    applies_to: [acars_airep]
+    description: Two reports from the same callsign at the same minute that disagree on position or altitude.
+    fail_query: |
+      SELECT report_id FROM (
+        SELECT report_id, lat, lon, alt_ft,
+               first_value(lat) OVER w AS lat0,
+               first_value(lon) OVER w AS lon0,
+               first_value(alt_ft) OVER w AS alt0,
+               row_number() OVER w AS rn
+        FROM v_reports
+        WHERE track_id IS NOT NULL AND obs_time IS NOT NULL
+        WINDOW w AS (PARTITION BY track_id, obs_time ORDER BY receipt_time, report_id)
+      ) WHERE rn > 1 AND (abs(lat - lat0) > 0.01 OR abs(lon - lon0) > 0.01 OR abs(alt_ft - alt0) > 100)
+
+  # ---------------------------------------------------------------- consistency
+  - id: R050
+    name: Plausible implied ground speed
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-07
+    applies_to: [acars_airep]
+    description: >
+      Speed implied by consecutive positions of one callsign must not exceed the limit
+      (a one-minute tolerance absorbs timestamp rounding). To blame the right report, a
+      fast leg fails the report only if it is a spike (the next leg is fast too) or the
+      start of a shift (skipping either this or the previous report does not help).
+      The report after a one-off spike is therefore not flagged.
+    fail_query: |
+      WITH legs AS (
+        SELECT report_id,
+          CASE WHEN date_diff('second', prev_obs_time, obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN kts(prev_lat, prev_lon, prev_obs_time, lat, lon, obs_time) END AS v_in,
+          CASE WHEN date_diff('second', obs_time, next_obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN kts(lat, lon, obs_time, next_lat, next_lon, next_obs_time) END AS v_out,
+          CASE WHEN date_diff('second', prev2_obs_time, obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN kts(prev2_lat, prev2_lon, prev2_obs_time, lat, lon, obs_time) END AS v_skip_prev,
+          CASE WHEN date_diff('second', prev_obs_time, next_obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN kts(prev_lat, prev_lon, prev_obs_time, next_lat, next_lon, next_obs_time) END AS v_skip_self
+        FROM v_track)
+      SELECT report_id FROM legs
+      WHERE v_in > ${max_groundspeed_kt}
+        AND (v_out IS NULL OR v_out > ${max_groundspeed_kt}
+             OR (v_skip_prev > ${max_groundspeed_kt} AND v_skip_self > ${max_groundspeed_kt}))
+
+  - id: R051
+    name: Plausible vertical rate
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-07
+    applies_to: [acars_airep]
+    description: Altitude change between consecutive reports of one callsign must not exceed the vertical-rate limit (same spike-or-shift blame logic as R050).
+    fail_query: |
+      WITH legs AS (
+        SELECT report_id,
+          CASE WHEN date_diff('second', prev_obs_time, obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN fpm(prev_alt_ft, prev_obs_time, alt_ft, obs_time) END AS v_in,
+          CASE WHEN date_diff('second', obs_time, next_obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN fpm(alt_ft, obs_time, next_alt_ft, next_obs_time) END AS v_out,
+          CASE WHEN date_diff('second', prev2_obs_time, obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN fpm(prev2_alt_ft, prev2_obs_time, alt_ft, obs_time) END AS v_skip_prev,
+          CASE WHEN date_diff('second', prev_obs_time, next_obs_time) BETWEEN 1 AND ${track_max_gap_min} * 60
+               THEN fpm(prev_alt_ft, prev_obs_time, next_alt_ft, next_obs_time) END AS v_skip_self
+        FROM v_track)
+      SELECT report_id FROM legs
+      WHERE v_in > ${max_vertical_rate_fpm}
+        AND (v_out IS NULL OR v_out > ${max_vertical_rate_fpm}
+             OR (v_skip_prev > ${max_vertical_rate_fpm} AND v_skip_self > ${max_vertical_rate_fpm}))
+
+  - id: R052
+    name: Position not frozen
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-07
+    applies_to: [acars_airep]
+    description: An aircraft en route cannot report the identical position minutes apart; a stuck position source is the likely cause.
+    fail_query: |
+      SELECT report_id FROM v_track
+      WHERE prev_obs_time IS NOT NULL
+        AND date_diff('second', prev_obs_time, obs_time) >= ${stuck_min_dt_min} * 60
+        AND date_diff('second', prev_obs_time, obs_time) <= ${track_max_gap_min} * 60
+        AND lat = prev_lat AND lon = prev_lon
+
+  - id: R053
+    name: Altitude matches message text
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-08
+    applies_to: [acars_airep, pirep]
+    description: The decoded altitude must match the flight level written in the original message (F360 / FL360). Catches unit and decoding errors that range checks miss.
+    fail_query: |
+      SELECT report_id FROM (
+        SELECT report_id, alt_ft,
+               coalesce(nullif(regexp_extract(raw_text, '\sF(\d{3})\s', 1), ''),
+                        nullif(regexp_extract(raw_text, '/FL(\d{3})(\s|/|$$)', 1), '')) AS fl_raw
+        FROM v_reports
+        WHERE alt_ft IS NOT NULL AND raw_text IS NOT NULL
+          AND NOT coalesce(flag_flt_lvl_range, false)
+          AND NOT coalesce(flag_agl, false)
+      ) WHERE fl_raw IS NOT NULL
+          AND abs(try_cast(fl_raw AS INTEGER) * 100 - alt_ft) > ${raw_alt_tolerance_ft}
+
+  - id: R054
+    name: Position matches message text
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-08
+    applies_to: [acars_airep]
+    description: The decoded latitude and longitude must match the position written in the AIREP (DDMMN DDDMMW).
+    fail_query: |
+      SELECT report_id FROM (
+        SELECT report_id, lat, lon,
+               regexp_extract(raw_text, '\b(\d{2})(\d{2})([NS])\s?(\d{3})(\d{2})([EW])\b',
+                              ['la', 'lam', 'ns', 'lo', 'lom', 'ew']) AS p
+        FROM v_reports
+        WHERE lat IS NOT NULL AND lon IS NOT NULL AND raw_text IS NOT NULL
+      ) WHERE p.la <> ''
+          AND (abs((try_cast(p.la AS DOUBLE) + try_cast(p.lam AS DOUBLE) / 60)
+                   * CASE WHEN p.ns = 'S' THEN -1 ELSE 1 END - lat) > ${raw_pos_tolerance_deg}
+               OR abs((try_cast(p.lo AS DOUBLE) + try_cast(p.lom AS DOUBLE) / 60)
+                   * CASE WHEN p.ew = 'W' THEN -1 ELSE 1 END - lon) > ${raw_pos_tolerance_deg})
+
+  - id: R055
+    name: Spatially consistent turbulence
+    dimension: consistency
+    severity: warning
+    requirement: DQ-REQ-09
+    applies_to: [acars_airep, pirep]
+    description: >
+      A turbulence report with at least ${min_neighbours} neighbours (within ${radius_km} km,
+      ${window_min} min and ${alt_ft} ft) whose severity differs from the neighbourhood median
+      by ${conflict_severity_diff} classes or more. Built in table spatial_status; see docs/methods.md.
+    fail_query: SELECT report_id FROM spatial_status WHERE status = 'conflict'
+
+  - id: R056
+    name: Temperature consistent with altitude
+    dimension: consistency
+    severity: warning
+    requirement: DQ-REQ-08
+    applies_to: [acars_airep, pirep]
+    description: Above 25,000 ft the air is essentially never warmer than 0 C; a positive value suggests a sign or unit error.
+    fail_when: alt_ft >= 25000 AND temp_c > 0
+
+  - id: R057
+    name: Observation time matches message text
+    dimension: consistency
+    severity: error
+    requirement: DQ-REQ-08
+    applies_to: [acars_airep, pirep]
+    description: The decoded observation time must match the HHMM written in the message (AIREP time after the position, PIREP /TM). Catches clock drift introduced in processing.
+    fail_query: |
+      SELECT report_id FROM (
+        SELECT report_id,
+               abs(try_cast(substr(hhmm, 1, 2) AS INTEGER) * 60 + try_cast(substr(hhmm, 3, 2) AS INTEGER)
+                   - (hour(obs_time) * 60 + minute(obs_time))) AS d
+        FROM (
+          SELECT report_id, obs_time,
+                 coalesce(nullif(regexp_extract(raw_text, '[NS]\s?\d{5}[EW]\s+(\d{4})\s', 1), ''),
+                          nullif(regexp_extract(raw_text, '/TM\s?(\d{4})', 1), '')) AS hhmm
+          FROM v_reports
+          WHERE obs_time IS NOT NULL AND raw_text IS NOT NULL
+            AND NOT coalesce(flag_no_time_stamp, false)
+            AND NOT coalesce(flag_mid_point_assumed, false)
+        ) WHERE hhmm IS NOT NULL
+      ) WHERE least(d, 1440 - d) > ${raw_time_tolerance_min}

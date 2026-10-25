@@ -1,0 +1,50 @@
+# One or more cases per rule. Each case starts from a valid baseline AIREP track
+# (tests/conftest.py: base_track) and applies `set` overrides to the row at `row`.
+# `fails` lists the rows expected to fail the rule; [] means the case must pass.
+# test_rules.py also asserts that every rule in config/rules.yaml has at least one
+# failing case and that the untouched baseline passes every rule.
+cases:
+  - {rule: R001, name: missing receipt time, row: 2, set: {receipt_time: null}, fails: [2]}
+  - {rule: R002, name: missing observation time, row: 2, set: {obs_time: null}, fails: [2]}
+  - {rule: R003, name: blank aircraft id, row: 2, set: {aircraft_ref: "  "}, fails: [2]}
+  - {rule: R004, name: missing latitude, row: 2, set: {lat: null}, fails: [2]}
+  - {rule: R005, name: missing altitude, row: 2, set: {alt_ft: null}, fails: [2]}
+  - {rule: R006, name: unknown report type, row: 2, set: {report_type: METAR}, fails: [2]}
+  - {rule: R007, name: empty raw text, row: 2, set: {raw_text: ""}, fails: [2]}
+  - {rule: R010, name: latitude above 90, row: 2, set: {lat: 91.0}, fails: [2]}
+  - {rule: R011, name: longitude below -180, row: 2, set: {lon: -181.0}, fails: [2]}
+  - {rule: R012, name: altitude above 60000 ft, row: 2, set: {alt_ft: 65000}, fails: [2]}
+  - {rule: R012, name: altitude at 60000 ft is allowed, row: 2, set: {alt_ft: 60000}, fails: []}
+  - {rule: R013, name: null island, row: 2, set: {lat: 0.0, lon: 0.0}, fails: [2]}
+  - {rule: R014, name: AIREP below 10000 ft, row: 2, set: {alt_ft: 8000}, fails: [2]}
+  - {rule: R015, name: unmapped intensity, row: 2, set: {tb_intensity: BUMPY}, fails: [2]}
+  - {rule: R015, name: mapped intensity passes, row: 2, set: {tb_intensity: MOD}, fails: []}
+  - {rule: R016, name: layer base above top, row: 2, set: {tb_base_ft: 30000, tb_top_ft: 28000}, fails: [2]}
+  - {rule: R017, name: EDR above 1, row: 2, set: {edr_est: 1.2}, fails: [2]}
+  - {rule: R018, name: temperature below -90, row: 2, set: {temp_c: -95.0}, fails: [2]}
+  - {rule: R019, name: wind speed above 300 kt, row: 2, set: {wind_speed_kt: 320.0}, fails: [2]}
+  - {rule: R020, name: wind direction above 360, row: 2, set: {wind_dir_deg: 400.0}, fails: [2]}
+  - {rule: R021, name: vertical gust above 100 kt, row: 2, set: {vert_gust_kt: 150.0}, fails: [2]}
+  - {rule: R022, name: provider bad location flag, row: 2, set: {flag_bad_location: true}, fails: [2]}
+  - {rule: R023, name: provider no flight level flag, row: 2, set: {flag_no_flt_lvl: true}, fails: [2]}
+  - {rule: R030, name: observation 10 min after receipt, row: 2, shift_min: {obs_time: 14}, fails: [2]}
+  - {rule: R030, name: observation 3 min after receipt is within tolerance, row: 2, shift_min: {obs_time: 7}, fails: []}
+  - {rule: R031, name: observation after ingestion, row: 2, shift_min: {obs_time: 20}, fails: [2]}
+  - {rule: R032, name: stale on arrival, row: 2, shift_min: {receipt_time: 90, ingested_at: 90}, fails: [2]}
+  - {rule: R033, name: latency above SLA, row: 2, shift_min: {receipt_time: 20, ingested_at: 20}, fails: [2]}
+  - {rule: R034, name: provider assumed time stamp, row: 2, set: {flag_no_time_stamp: true}, fails: [2]}
+  - {rule: R040, name: exact duplicate delivered later, duplicate_row: 2, fails: [dup]}
+  - {rule: R041, name: same callsign and minute but different position, duplicate_row: 2, dup_set: {lat: 50.5}, fails: [dup]}
+  - {rule: R050, name: one-off position spike, row: 2, add: {lat: 4.0}, fails: [2]}
+  - {rule: R050, name: report after a spike is not blamed, row: 2, add: {lat: 4.0}, not_fails: [3]}
+  - {rule: R050, name: persistent shift blames first shifted report, rows_from: 3, add: {lat: 4.0}, fails: [3]}
+  - {rule: R051, name: altitude spike, row: 2, add: {alt_ft: 60000}, fails: [2]}
+  - {rule: R051, name: normal 2000 ft step climb, rows_from: 3, add: {alt_ft: 2000}, fails: []}
+  - {rule: R052, name: frozen position, rows_from: 3, copy_position_from: 2, fails: [3, 4, 5]}
+  - {rule: R053, name: altitude decoded in metres, row: 2, set: {alt_ft: 10668}, fails: [2]}
+  - {rule: R053, name: PIREP FL in text matches, row: 2, set: {alt_ft: 36000, raw_text: "DEN UA /OV DEN/TM 1212/FL360/TP B738/TB LGT"}, fails: []}
+  - {rule: R053, name: PIREP FL in text differs, row: 2, set: {alt_ft: 26000, raw_text: "DEN UA /OV DEN/TM 1212/FL360/TP B738/TB LGT"}, fails: [2]}
+  - {rule: R054, name: latitude differs from message, row: 2, add: {lat: 0.5}, fails: [2]}
+  - {rule: R055, name: severe report among calm neighbours, spatial: true, fails: [target]}
+  - {rule: R056, name: positive temperature at FL350, row: 2, set: {temp_c: 5.0}, fails: [2]}
+  - {rule: R057, name: observation time differs from message, row: 2, shift_min: {obs_time: -6, receipt_time: -6, ingested_at: -6}, fails: [2]}

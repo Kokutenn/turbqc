@@ -1,0 +1,45 @@
+# Data quality requirements. Each rule in rules.yaml traces to one of these,
+# and docs/traceability.md is generated from both files plus the test cases.
+requirements:
+  - id: DQ-REQ-01
+    title: Mandatory fields
+    text: Every report must carry receipt time, observation time, an aircraft identifier, a position and an altitude.
+  - id: DQ-REQ-02
+    title: Physical value ranges
+    text: Position, altitude, temperature, wind and EDR values must be physically plausible.
+  - id: DQ-REQ-03
+    title: Controlled vocabulary
+    text: Report types and turbulence intensities must belong to the documented code lists so they can be mapped to EDR.
+  - id: DQ-REQ-04
+    title: Timestamp integrity
+    text: Observation times must not be in the future relative to receipt or ingestion.
+  - id: DQ-REQ-05
+    title: Timeliness
+    text: Reports should arrive within the latency SLA; stale reports are flagged for downstream consumers.
+  - id: DQ-REQ-06
+    title: Uniqueness
+    text: Each physical observation must be represented once; redundant or conflicting deliveries are flagged.
+  - id: DQ-REQ-07
+    title: Kinematic plausibility
+    text: Consecutive reports from one flight must imply achievable ground speed and vertical rate and must not show a frozen position.
+  - id: DQ-REQ-08
+    title: Internal consistency
+    text: Decoded fields must agree with the original message text (position, time, flight level) and with physics (temperature vs altitude).
+  - id: DQ-REQ-09
+    title: Spatial consistency
+    text: A turbulence report that strongly disagrees with nearby reports in space, time and altitude is flagged for review.
+  - id: DQ-REQ-10
+    title: Provider quality flags
+    text: Quality flags set by the data provider are surfaced, not silently dropped.
+  - id: DQ-REQ-11
+    title: Feed continuity
+    text: Reporting volume per source is monitored; dropouts, gaps and abnormal volume raise alerts.
+  - id: DQ-REQ-12
+    title: Output product integrity
+    text: The distributed turbulence grid must reconcile exactly to the accepted input reports.
+  - id: DQ-REQ-13
+    title: Nowcast acceptance metrics
+    text: A turbulence nowcast is verified against QC-passed observations by flight-level band and nowcast age (POD, FAR, CSI, ROC area with confidence intervals) and checked against documented acceptance criteria.
+  - id: DQ-REQ-14
+    title: Migration reconciliation
+    text: Before cutover, the legacy and new pipelines run in parallel on the same raw data; every discrepancy is explained by an approved known difference or blocks sign-off, and cutover requires the sign-off criteria to hold on consecutive batches.

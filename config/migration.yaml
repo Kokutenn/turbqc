@@ -1,0 +1,100 @@
+# Migration v1 (legacy pandas) -> v2 (DuckDB/SQL): reconciliation configuration.
+#
+# Every discrepancy the reconciliation finds must either match a known difference
+# below (an approved behaviour change) or be inherited from causes that do.
+# Anything else is "unexplained" and blocks sign-off.
+
+# Record fields compared on the agreed business key (report_id).
+# Value = absolute tolerance for numbers; {seconds: n} = timestamps equal within n seconds
+# (a normalisation, see KD-02); null = must be exactly equal (NULL = NULL).
+compare_fields:
+  obs_time: {seconds: 1}
+  receipt_time: {seconds: 1}
+  report_type: null
+  stream: null
+  source_id: null
+  operator: null
+  aircraft_ref: null
+  lat: 1.0e-9
+  lon: 1.0e-9
+  alt_ft: 0
+  tb_intensity: null
+  edr_band: null
+  edr_est: 1.0e-9
+  severity: 1.0e-9
+  temp_c: 1.0e-9
+  wind_dir_deg: 1.0e-9
+  wind_speed_kt: 1.0e-9
+  raw_text: null
+
+# Product cells: n_reports must match exactly, edr_max within tolerance.
+product_edr_tolerance: 1.0e-9
+
+# Conditions are SQL over the discrepancy row joined to both records:
+#   check_type, col, v1_value, v2_value, v1_<field>, v2_<field>, prev_flagged_v2, v2_fast_leg_in
+known_differences:
+  - id: KD-01
+    title: Second turbulence layer now drives EDR
+    description: >
+      v1 read only the first turbulence group (the repeated CSV header columns were
+      renamed by pandas and never used). v2 maps the more severe of the two layers,
+      which is more conservative for safety.
+    when: "check_type = 'field' AND col IN ('edr_band', 'edr_est', 'severity') AND v2_tb_intensity2 IS NOT NULL"
+    disposition: accepted
+
+  - id: KD-02
+    title: Receipt and observation times keep milliseconds
+    description: >
+      v1 stored timestamps in a DATETIME column without fractional seconds. v2 keeps the
+      provider's milliseconds. Handled as a comparison normalisation (times compared to
+      the second) rather than one register row per report; the number of values it
+      affected is reported as normalised_differences.
+    normalises: [receipt_time, obs_time]
+    disposition: accepted
+
+  - id: KD-03
+    title: Implied-speed check blames only the faulty report
+    description: >
+      v1 failed every report reached by an implausibly fast leg, so the report after a
+      one-off position spike, or around a clock jump, was rejected as well. v2's R050 sees
+      the same fast leg but blames only the report that is a spike or the start of a shift
+      (methods §3). A v1-only R050 flag is expected exactly when v2 also measures a fast
+      leg into that report.
+    when: "check_type = 'rule_flag' AND col = 'R050' AND v1_value = 'true' AND v2_value = 'false' AND v2_fast_leg_in"
+    disposition: accepted
+
+  - id: KD-04
+    title: New error-level rules in v2
+    description: >
+      v2 adds rules v1 never had (message cross-checks R053/R054/R057, frozen position
+      R052, plausible vertical rate R051, code lists R006/R015). Their failures reject
+      reports v1 accepted.
+    when: "check_type = 'rule_flag' AND v1_value = 'not in v1'"
+    disposition: accepted
+
+# Defects found by the reconciliation and fixed in v2 (the audit trail of the parallel run).
+resolved_defects:
+  - id: DEF-01
+    found: Parallel run on the live archive, batch 2026-10-24
+    symptom: >
+      One report present in v1 but missing in v2 (key check), which also broke the
+      pirep volume reconciliation for that hour. Both were unexplained, so the decision was NO-GO.
+    root_cause: >
+      The provider does not quote raw_text. A PIREP remark contained a comma ("...ONCE OUT OF
+      CLOUDS, CEILINGS 011 MSL"), so the line had 45 fields instead of 44. v2 quarantined it as
+      malformed and lost a valid report. v1 happened to re-join the overflow into the message.
+    fix: >
+      feed.parse re-joins any overflow into raw_text (the last column); only lines that cannot
+      be repaired count as malformed.
+    verified_by: test_overflowing_free_text_is_repaired; rerun of the live parallel run (SO-01 to SO-04 green)
+
+sign_off:
+  - {id: SO-01, name: Every key present in both systems, metric: missing_keys, op: "==", target: 0}
+  - {id: SO-02, name: Volumes reconcile by stream and hour, metric: volume_mismatches, op: "==", target: 0}
+  - {id: SO-03, name: No unexplained record-level discrepancies, metric: unexplained_record, op: "==", target: 0}
+  - {id: SO-04, name: No unexplained aggregate discrepancies, metric: unexplained_aggregate, op: "==", target: 0}
+  - {id: SO-05, name: Raw record match rate (before explanations), metric: record_match_rate, op: ">=", target: 0.95}
+  - {id: SO-06, name: Only approved known differences applied, metric: unapproved_differences_used, op: "==", target: 0}
+
+parallel_run:
+  consecutive_green_required: 3     # SO-07: criteria met on this many consecutive daily batches

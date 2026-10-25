@@ -1,0 +1,142 @@
+# TurbQC runtime settings. Every threshold used by a rule or detector lives here,
+# so a reviewer can change acceptance criteria without touching code.
+
+feed:
+  bulk_url: https://aviationweather.gov/data/cache/aircraftreports.cache.csv.gz
+  timeout_s: 30
+  user_agent: "TurbQC/0.1 (non-commercial portfolio project)"
+  # The bulk file holds roughly the last 90 minutes of reports. An hour is only
+  # treated as fully observed if the collector ran within this horizon after it.
+  cache_horizon_min: 75
+
+paths:
+  db: data/turbqc.duckdb
+  demo_db: data/demo.duckdb
+  raw_archive: data/raw
+
+ingest:
+  poll_minutes: 5
+  archive_raw: true
+  archive_every_min: 60     # hourly archives are enough because the file overlaps ~90 min
+
+# Columns the feed must contain. A missing one marks the run as schema drift.
+expected_columns:
+  - receipt_time
+  - observation_time
+  - aircraft_ref
+  - latitude
+  - longitude
+  - altitude_ft_msl
+  - turbulence_intensity
+  - report_type
+  - raw_text
+
+# Fields counted by the completeness KPI, per stream.
+required_fields:
+  acars_airep: [receipt_time, obs_time, aircraft_ref, lat, lon, alt_ft, temp_c, wind_dir_deg, wind_speed_kt, raw_text]
+  pirep:       [receipt_time, obs_time, aircraft_ref, lat, lon, alt_ft, raw_text]
+
+thresholds:
+  latency_sla_min: 15          # timeliness KPI: receipt - observation
+  stale_min: 60                # older than this on arrival = stale
+  future_tolerance_min: 5      # clock tolerance before a timestamp counts as "future"
+  max_groundspeed_kt: 750      # implied speed between consecutive AIREPs of one callsign
+  max_vertical_rate_fpm: 8000
+  track_max_gap_min: 180       # beyond this a callsign is treated as a new flight
+  stuck_min_dt_min: 5          # same position this long apart = frozen position source
+  raw_time_tolerance_min: 2
+  raw_pos_tolerance_deg: 0.05
+  raw_alt_tolerance_ft: 100
+  dup_conflict_km: 5
+
+volume:
+  z_threshold: 3.0
+  min_history_days: 3          # same-hour-of-day baseline once this much history exists; before that
+                               # (learning period) only dropouts are alerted
+  rolling_hours: 6             # otherwise a rolling baseline of the previous N hours (short, to follow the daily cycle)
+  residual_hours: 48           # window for learning each source's own spread (MAD of residuals)
+  overdispersion: 2.0          # floor: reports arrive in bursts (one flight = several reports), so variance > Poisson
+  min_baseline_for_dropout: 5  # a zero-count hour is a dropout only if we expected >= this
+
+gaps:
+  acars_airep_min: 20
+  pirep_min: 60
+  exclude_sources: [AIREP-UNK]   # not a real channel: AIREPs whose relay code could not be parsed
+
+latency:
+  min_reports_per_hour: 5
+
+flatline:
+  min_reports: 10
+  fields: [temp_c, wind_dir_deg, wind_speed_kt]
+
+spatial:
+  radius_km: 100
+  window_min: 60
+  alt_ft: 2000
+  min_neighbours: 2
+  conflict_severity_diff: 2    # e.g. SEV (3) against a neighbourhood median of LGT (1)
+
+kpi:
+  targets:
+    completeness: 0.98
+    validity: 0.99
+    timeliness: 0.95
+    consistency: 0.97
+    uniqueness: 0.999
+  amber_margin: 0.02
+  weights: {completeness: 1, validity: 1, timeliness: 1, consistency: 1, uniqueness: 1}
+
+# Per-report confidence (0..1) carried into the output product instead of a pass/fail
+# filter. confidence = product of the factors below. See docs/methods.md.
+confidence:
+  warning_factor: 0.7          # applied once per warning-level rule failure
+  late_factor: 0.8             # latency above SLA
+  subjectivity_factor: 0.8     # PIREP (pilot judgement) vs automated AIREP
+  source_window_hours: 24      # source reliability = Beta(1,1) posterior of clean-report share
+  corroboration:
+    confirmed: 1.0
+    partial: 0.9
+    sparse: 0.9
+    isolated: 0.85
+    conflict: 0.5
+
+# Verification of the NWS Graphical Turbulence Guidance Nowcast (GTGN) against reports.
+# GTGN: EDR on a 3 km CONUS Lambert grid, 51 levels (100 ft to FL500), every 15 min.
+# NOMADS keeps about 2 days, so verification must run at least daily.
+verification:
+  gtgn_url: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gtgn/prod/gtgn.{t:%Y%m%d}/{t:%H}/gtgn.t{t:%H%M}z.3km.grib2"
+  slot_minutes: 30             # use the GTGN analysis nearest each report, on this cadence
+  lags_min: [0, 30, 60, 120]   # nowcast age: how stale can the product be before skill drops?
+  neighbourhood_km: 20         # PIREP positions are approximate (relative to a VOR); take the max EDR nearby
+  neighbourhood_levels: 1      # +/- 1,000 ft
+  event_severity: 2            # observed event = MOD or worse
+  edr_threshold: 0.20          # forecast event = EDR >= this (ICAO moderate anchor, as in edr_mapping)
+  sweep: [0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22, 0.25, 0.30, 0.35, 0.45]
+  bootstrap: 300               # resamples for 90% confidence intervals
+  pirep_api: https://aviationweather.gov/api/data/pirep
+  backfill_bbox: "20,-130,55,-60"
+  # Illustrative acceptance criteria for a nowcast product (per FL band, lag 0)
+  acceptance:
+    min_pairs: 30
+    pod_min: 0.50
+    far_max: 0.80
+    auc_min: 0.65
+    max_relative_csi_drop_60min: 0.25
+
+# Converting pilot-reported intensity into an EDR estimate (m^2/3 s^-1).
+# ASSUMPTION, not truth: PIREP intensity is subjective and depends on aircraft size.
+# Values are representative mid-points of the bands, anchored on the ICAO Annex 3
+# peak-EDR reporting thresholds (moderate > 0.20, severe > 0.45). See docs/methods.md.
+edr_mapping:
+  NEG:       {band: NIL,     edr: 0.05, severity: 0}
+  SMTH:      {band: NIL,     edr: 0.05, severity: 0}
+  SMTH-LGT:  {band: LGT,     edr: 0.10, severity: 0.5}
+  LGT:       {band: LGT,     edr: 0.15, severity: 1}
+  LGT-MOD:   {band: LGT-MOD, edr: 0.20, severity: 1.5}
+  MOD:       {band: MOD,     edr: 0.30, severity: 2}
+  MOD-SEV:   {band: MOD-SEV, edr: 0.45, severity: 2.5}
+  SEV:       {band: SEV,     edr: 0.55, severity: 3}
+  SEV-EXTM:  {band: SEV,     edr: 0.65, severity: 3.5}
+  EXTM:      {band: EXTM,    edr: 0.75, severity: 4}
+band_order: [NIL, LGT, LGT-MOD, MOD, MOD-SEV, SEV, EXTM]
