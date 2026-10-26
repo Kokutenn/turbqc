@@ -1,5 +1,12 @@
 # TurbQC: a quality-control module for turbulence data
 
+[![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://turbqc.streamlit.app)
+[![tests](https://github.com/Kokutenn/turbqc/actions/workflows/ci.yml/badge.svg)](https://github.com/Kokutenn/turbqc/actions/workflows/ci.yml)
+
+**▶ Live demo: [turbqc.streamlit.app](https://turbqc.streamlit.app)**. Explore it in the browser,
+nothing to install. It opens on 5 days of synthetic traffic with injected incidents. Switch to
+"Live feed" and press *Poll feed now* to pull real reports from aviationweather.gov.
+
 A near-real-time **data quality monitor for public turbulence reports**. It ingests the
 NOAA Aviation Weather Center feed every few minutes into DuckDB. It then validates every
 report against a 36-rule SQL catalogue, watches each delivery channel statistically,
