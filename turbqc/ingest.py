@@ -74,7 +74,7 @@ def run_once(db_path=None, refresh: bool = True) -> dict:
     try:
         status, payload = feed.fetch(cfg)
     except Exception as e:  # network or HTTP error
-        con = db.connect(db_path)
+        con = db.connect(db_path, retries=240)
         run = dict(run_id=f"{started.strftime('%Y%m%dT%H%M%S')}-err", started_at=started,
                    finished_at=_now(), source_url=url, http_status=None, bytes=0, rows_in_file=0,
                    rows_malformed=0, rows_new=0, rows_already_seen=0, status="fetch_error",
@@ -83,7 +83,7 @@ def run_once(db_path=None, refresh: bool = True) -> dict:
         con.close()
         return run
     archive = _archive(payload, started, cfg)
-    con = db.connect(db_path)
+    con = db.connect(db_path, retries=240)
     try:
         run = ingest_payload(con, payload, started, url, status, archive, cfg)
         if refresh:
@@ -97,7 +97,7 @@ def run_once(db_path=None, refresh: bool = True) -> dict:
 def replay(archive_dir: str | Path, db_path=None) -> int:
     """Rebuild a database from archived raw files (*.csv.gz) or collected history (*.parquet)."""
     root = Path(archive_dir)
-    con = db.connect(db_path)
+    con = db.connect(db_path, retries=240)
     total = 0
     for f in sorted(root.rglob("*.csv.gz")):
         total += ingest_payload(con, f.read_bytes(), _archive_stamp(f), f"file:{f.name}")["rows_new"]

@@ -163,13 +163,19 @@ Keep collecting (the AWC API keeps only ~15 days):
 
 ```bash
 python -m turbqc ingest --loop                 # every 5 min while the terminal is open
-powershell -File scripts/schedule_windows.ps1  # or a Windows scheduled task
+powershell -File scripts/schedule_windows.ps1  # or two Windows scheduled tasks (no admin needed):
+                                               #   TurbQC-Collector  every 5 min   python -m turbqc ingest
+                                               #   TurbQC-Daily      06:30 daily   python -m turbqc daily
 ```
+
+`daily` back-fills PIREPs, verifies the GTG Nowcast and runs the v1/v2 parallel run, each step
+independent, logging to `data/logs/`. It opens the database only for short writes, so the
+5-minute collector (a separate process; DuckDB allows one writer) is never blocked for long.
 
 or enable the hourly **collect** GitHub Action, which commits deduplicated daily Parquet to a
 `data` branch. Load it with `python -m turbqc replay data/history`.
 
-Verify the GTG Nowcast (run at least daily; NOMADS keeps ~2 days):
+Verify the GTG Nowcast by hand (the daily job does this; NOMADS keeps only ~2 days):
 
 ```bash
 python -m turbqc verify --backfill     # pull 48 h of PIREPs, stream matching GTGN analyses, print scores

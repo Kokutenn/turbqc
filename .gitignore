@@ -7,3 +7,4 @@ data/*.duckdb.wal
 data/raw/
 data/history/
 .claude/
+data/logs/

@@ -171,10 +171,16 @@ def candidates(con, hours: float, cfg: dict, now: pd.Timestamp | None = None) ->
     return out[(out["valid_time"] >= oldest) & (out["valid_time"] <= now - pd.Timedelta(minutes=5))]
 
 
-def run(con, hours: float = 48, cfg: dict | None = None, max_files: int | None = None) -> dict:
-    """Fetch every GTGN analysis needed to match recent reports and store the pairs."""
+def run(db_path=None, hours: float = 48, cfg: dict | None = None, max_files: int | None = None) -> dict:
+    """Fetch every GTGN analysis needed to match recent reports and store the pairs.
+
+    Downloads take minutes, so the database is opened only briefly per file: the
+    5-minute collector (a separate process) must never find it locked for long.
+    """
     cfg = cfg or config.settings()
+    con = db.connect(db_path)
     cand = candidates(con, hours, cfg)
+    con.close()
     stats = dict(files=0, pairs=0, unavailable=0)
     for valid, grp in sorted(cand.groupby("valid_time"), key=lambda t: t[0], reverse=True):
         if max_files is not None and stats["files"] >= max_files:
@@ -189,12 +195,15 @@ def run(con, hours: float = 48, cfg: dict | None = None, max_files: int | None =
             msg = None
         if payload is None:
             stats["unavailable"] += 1
+            con = db.connect(db_path)
             _log_file(con, valid, f"http_{status}", 0, time.perf_counter() - t0, 0, msg)
+            con.close()
             continue
         obs = grp.drop_duplicates("report_id")
         sampled = sample_gtgn(payload, obs, cfg)
         pairs = grp[["report_id", "lag_min", "valid_time"]].merge(sampled, on="report_id")
         pairs["source"] = "gtgn"
+        con = db.connect(db_path)
         con.register("pairs_df", pairs)
         con.execute("""INSERT OR IGNORE INTO verif_pairs
                        SELECT report_id, lag_min, valid_time, edr_point, edr_nbhd, source FROM pairs_df""")
@@ -202,6 +211,7 @@ def run(con, hours: float = 48, cfg: dict | None = None, max_files: int | None =
         stats["files"] += 1
         stats["pairs"] += len(pairs)
         _log_file(con, valid, "ok", len(payload), time.perf_counter() - t0, len(pairs), None)
+        con.close()
         log.info("GTGN %s: %d pairs", valid, len(pairs))
         del payload
     return stats
@@ -235,8 +245,9 @@ def json_to_feed_frame(records: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def backfill_pireps(con, hours: int = 48, cfg: dict | None = None) -> dict:
-    """Pull past reports hour by hour from the Data API (the bulk file only holds ~90 min)."""
+def backfill_pireps(db_path=None, hours: int = 48, cfg: dict | None = None) -> dict:
+    """Pull past reports hour by hour from the Data API (the bulk file only holds ~90 min).
+    All API calls happen before the database is opened."""
     cfg = cfg or config.settings()
     v = cfg["verification"]
     now = _now()
@@ -253,6 +264,7 @@ def backfill_pireps(con, hours: int = 48, cfg: dict | None = None) -> dict:
     run_id = f"{now:%Y%m%dT%H%M%S}-backfill"
     df = feed.normalise(json_to_feed_frame(records), run_id, now, cfg) if records else pd.DataFrame()
     new = 0
+    con = db.connect(db_path)
     if not df.empty:
         # The same report may already have arrived through the bulk file: match on content.
         con.register("bf", df)
@@ -265,6 +277,7 @@ def backfill_pireps(con, hours: int = 48, cfg: dict | None = None) -> dict:
     con.execute("""INSERT INTO ingest_runs (run_id, started_at, finished_at, source_url, rows_in_file,
                    rows_new, rows_already_seen, status, message) VALUES (?, ?, ?, ?, ?, ?, ?, 'backfill', ?)""",
                 [run_id, now, _now(), v["pirep_api"], len(records), new, len(records) - new, f"{hours} h"])
+    con.close()
     return dict(records=len(records), new=new)
 
 
