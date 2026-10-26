@@ -1,4 +1,4 @@
-duckdb>=1.1
+duckdb>=2.0              # the committed demo database is in DuckDB 2.x storage format
 pandas>=2.2
 numpy>=1.26
 pyyaml>=6.0

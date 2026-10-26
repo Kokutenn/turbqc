@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 data/*.duckdb
+!data/demo.duckdb
 data/*.duckdb.wal
 data/raw/
 data/history/

@@ -111,7 +111,8 @@ def kpi_columns():
 # ------------------------------------------------------------------ sidebar
 st.sidebar.title("TurbQC")
 st.sidebar.caption("Data quality monitor for public turbulence reports")
-choice = st.sidebar.radio("Database", list(DB_CHOICES), index=1 if not DB_CHOICES["Live feed (AWC)"].exists() else 0)
+# The demo ships with the repo (synthetic data only) so a visitor sees everything at once.
+choice = st.sidebar.radio("Database", list(DB_CHOICES), index=1)
 path = DB_CHOICES[choice]
 live = choice.startswith("Live")
 
@@ -133,7 +134,16 @@ if not live and not path.exists():
     with st.spinner("First start: building the demo database (about a minute)…"):
         demo.build(path, hours=120)
 
-data = load(str(path), _mtime(path))
+try:
+    data = load(str(path), _mtime(path))
+except Exception:
+    if live:
+        raise
+    # The committed demo file could not be read (e.g. a DuckDB storage-format change): rebuild it.
+    with st.spinner("Rebuilding the demo database for this DuckDB version (about a minute)…"):
+        demo.build(path, hours=120)
+    st.cache_data.clear()
+    data = load(str(path), _mtime(path))
 if not data.get("n"):
     st.info("No reports yet. Use **Poll feed now** in the sidebar, or switch to the demo database.")
     st.stop()
